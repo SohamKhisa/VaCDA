@@ -3,6 +3,8 @@ import torch
 import torch.nn as nn
 import torchvision
 import torch.nn.functional as F
+from torch.autograd import Variable
+from functools import partial
 
 def reparameterize(mu, logvar):
     std = torch.exp(0.5*logvar)
@@ -70,44 +72,102 @@ def nt_xent_loss(out_1, out_2, temperature=0.5):
     loss = -torch.log(pos / (neg + epsilon)).mean()
     
     return loss
+    
+    
+    
+    
+    
+def activity_contrastive_loss(z, labels, temperature=0.5, eps=1e-8):
+    # Normalize the latent vectors to ensure unit length
+    z = F.normalize(z, dim=-1, p=2)
+    
+    # Full similarity matrix (N x N), where N is the batch size
+    sim_matrix = torch.mm(z, z.t()) / temperature
+    
+    # Label matching matrix (1 if same activity, 0 otherwise)
+    label_matrix = (labels.unsqueeze(1) == labels.unsqueeze(0)).float().to(z.device)
+
+    # Mask to ignore self-similarity
+    mask = torch.eye(label_matrix.size(0), dtype=torch.bool).to(z.device)
+    sim_matrix = sim_matrix.masked_fill(mask, float('-inf'))  # Set diagonal to -inf to avoid self-similarity
+    
+    # Stabilize with log-sum-exp trick
+    max_sim, _ = torch.max(sim_matrix, dim=1, keepdim=True)
+    exp_sim = torch.exp(sim_matrix - max_sim)  # Prevent overflow
+    sum_exp_sim = exp_sim.sum(dim=1, keepdim=True) + eps  # Sum of all exponentials for normalization
+
+    # Positive similarities (where labels match)
+    pos_sim = exp_sim * label_matrix
+    pos_sum_sim = pos_sim.sum(dim=1) + eps  # Sum of positive similarities
+    
+    # Negative similarities (where labels don't match)
+    neg_sim = exp_sim * (1 - label_matrix)
+    neg_sum_sim = neg_sim.sum(dim=1) + eps  # Sum of negative similarities
+    
+    # Positive and negative loss
+    pos_loss = -torch.log(pos_sum_sim / sum_exp_sim)
+    neg_loss = -torch.log(neg_sum_sim / sum_exp_sim)
+    
+    # Combine positive and negative loss
+    loss = (pos_loss + neg_loss).mean()
+
+    return loss
 
 
 
 
 
+def pairwise_distance(x, y):
+
+    if not len(x.shape) == len(y.shape) == 2:
+        raise ValueError('Both inputs should be matrices.')
+
+    if x.shape[1] != y.shape[1]:
+        raise ValueError('The number of features should be the same.')
+
+    x = x.view(x.shape[0], x.shape[1], 1)
+    y = torch.transpose(y, 0, 1)
+    output = torch.sum((x - y) ** 2, 1)
+    output = torch.transpose(output, 0, 1)
+
+    return output
 
 
+def gaussian_kernel_matrix(x, y, sigmas):
 
-class RBF(nn.Module):
+    sigmas = sigmas.view(sigmas.shape[0], 1)
+    beta = 1. / (2. * sigmas)
+    beta = beta.to(x.get_device())
+    dist = pairwise_distance(x, y).contiguous()
+    dist_ = dist.view(1, -1)
+    s = torch.matmul(beta, dist_)
 
-    def __init__(self, n_kernels=5, mul_factor=2.0, bandwidth=None):
-        super().__init__()
-        self.bandwidth_multipliers = mul_factor ** (torch.arange(n_kernels) - n_kernels // 2)
-        self.bandwidth = bandwidth
+    return torch.sum(torch.exp(-s), 0).view_as(dist)
 
-    def get_bandwidth(self, L2_distances):
-        if self.bandwidth is None:
-            n_samples = L2_distances.shape[0]
-            return L2_distances.data.sum() / (n_samples ** 2 - n_samples)
+def maximum_mean_discrepancy(x, y, kernel= gaussian_kernel_matrix):
 
-        return self.bandwidth
+    cost = torch.mean(kernel(x, x))
+    cost += torch.mean(kernel(y, y))
+    cost -= 2 * torch.mean(kernel(x, y))
 
-    def forward(self, X):
-        L2_distances = torch.cdist(X, X) ** 2
-        return torch.exp(-L2_distances[None, ...] / (self.get_bandwidth(L2_distances) * self.bandwidth_multipliers)[:, None, None]).sum(dim=0)
+    return cost
 
+def mmd_loss(source_features, target_features, device):
 
-class MMDLoss(nn.Module):
+    sigmas = [
+        1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1, 5, 10, 15, 20, 25, 30, 35, 100,
+        1e3, 1e4, 1e5, 1e6
+    ]
+    if device == 'gpu':
+        gaussian_kernel = partial(
+            gaussian_kernel_matrix, sigmas = Variable(torch.cuda.FloatTensor(sigmas))
+        )
+    else:
+        gaussian_kernel = partial(
+            gaussian_kernel_matrix, sigmas = Variable(torch.FloatTensor(sigmas))
+        )
+    loss_value = maximum_mean_discrepancy(source_features, target_features, kernel= gaussian_kernel)
+    loss_value = loss_value
 
-    def __init__(self, kernel=RBF()):
-        super().__init__()
-        self.kernel = kernel
+    return loss_value
 
-    def forward(self, X, Y):
-        K = self.kernel(torch.vstack([X, Y]))
-
-        X_size = X.shape[0]
-        XX = K[:X_size, :X_size].mean()
-        XY = K[:X_size, X_size:].mean()
-        YY = K[X_size:, X_size:].mean()
-        return XX - 2 * XY + YY
