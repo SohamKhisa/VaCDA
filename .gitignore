@@ -53,7 +53,7 @@ docs/_build/
 .ipynb_checkpoints
 temp/
 Dataset_Preprocessed/
-Output/
+Output*/
 Save/
 vacda2.ipynb
 vacda3.ipynb

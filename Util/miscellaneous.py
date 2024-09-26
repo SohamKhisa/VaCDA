@@ -75,8 +75,6 @@ def nt_xent_loss(out_1, out_2, temperature=0.5):
     
     
     
-    
-    
 def activity_contrastive_loss(z, labels, temperature=0.5, eps=1e-8):
     # Normalize the latent vectors to ensure unit length
     z = F.normalize(z, dim=-1, p=2)
@@ -107,12 +105,45 @@ def activity_contrastive_loss(z, labels, temperature=0.5, eps=1e-8):
     # Positive and negative loss
     pos_loss = -torch.log(pos_sum_sim / sum_exp_sim)
     neg_loss = -torch.log(neg_sum_sim / sum_exp_sim)
+    # neg_loss = -torch.log(1 - (neg_sum_sim / sum_exp_sim))
     
     # Combine positive and negative loss
     loss = (pos_loss + neg_loss).mean()
 
     return loss
 
+
+
+def contrastive_loss2(z, labels, temperature=0.5, eps=1e-8):
+    # Normalize the latent vectors to unit length
+    z = F.normalize(z, dim=-1, p=2)
+    
+    # Full similarity matrix (N x N), where N is the batch size
+    sim_matrix = torch.mm(z, z.t()) / temperature
+    
+    # Label matching matrix (1 if same activity, 0 otherwise)
+    label_matrix = (labels.unsqueeze(1) == labels.unsqueeze(0)).float().to(z.device)
+
+    # Mask to ignore self-similarity
+    mask = torch.eye(label_matrix.size(0), dtype=torch.bool).to(z.device)
+    sim_matrix = sim_matrix.masked_fill(mask, float('-inf'))  # Set diagonal to -inf to avoid self-similarity
+
+    # Positive similarities (where labels match)
+    positives_sim = torch.exp(sim_matrix) * label_matrix  # Exp for cross-entropy scaling
+    positives_sum = positives_sim.sum(dim=1) + eps  # Sum of positive similarities
+
+    # Negative similarities (where labels don't match)
+    negatives_sim = torch.exp(sim_matrix) * (1 - label_matrix)  # Masking the negatives
+    negatives_sum = negatives_sim.sum(dim=1) + eps  # Sum of negative similarities
+
+    # Cross-entropy calculation
+    denominator = positives_sum + negatives_sum
+    cross_entropy_loss = -torch.log(positives_sum / denominator)
+
+    # Compute the mean loss
+    loss = cross_entropy_loss.mean()
+
+    return loss
 
 
 

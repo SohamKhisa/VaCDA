@@ -104,7 +104,7 @@ def plot_confusion_matrix(cm, classes, normalize=False, title='Confusion matrix'
     Normalization can be applied by setting `normalize=True`.
     Saves the plot to the provided directory
     """
-    figsize = (8, 8)
+    figsize = (12, 12)
     fontsize = 14
     label_fontsize = 14
     
@@ -393,7 +393,7 @@ def two_component_pca_visualization(source1, source1_gt, target_no = 4):
     ax.legend(target_label)
     ax.grid()
     
-def plot_data_distribution(s1, s2, target, activity_list):
+def plot_data_distribution(source, target, activity_list):
 
     n_groups = len(activity_list)
 
@@ -402,9 +402,9 @@ def plot_data_distribution(s1, s2, target, activity_list):
     bar_width = 0.25
     opacity = 0.8
 
-    rects1 = plt.bar(index, s1, bar_width, alpha=opacity, color='b', label='Source1')
-    rects2 = plt.bar(index + bar_width, s2, bar_width, alpha=opacity, color='g', label='Source2')
-    rects3 = plt.bar(index + 2*bar_width, target, bar_width, alpha=opacity, color='m',label='Target')
+    rects = plt.bar(index, source, bar_width, alpha=opacity, color='b', label='Source1')
+    # rects2 = plt.bar(index + bar_width, s2, bar_width, alpha=opacity, color='g', label='Source2')
+    rects3 = plt.bar(index + bar_width, target, bar_width, alpha=opacity, color='m',label='Target')
 
     plt.xlabel('Activity', fontsize=14)
     plt.ylabel('Window Number', fontsize=14)
